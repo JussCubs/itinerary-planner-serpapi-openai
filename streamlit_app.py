@@ -35,13 +35,13 @@ def get_questions():
     )
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a friendly itinerary planner."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.7,
-            max_tokens=200,
+            max_tokens=2000,
         )
         content = response.choices[0].message.content.strip()
         questions = json.loads(content)
@@ -96,13 +96,13 @@ def generate_itinerary(conversation_history, start_date, end_date):
     while attempt < max_attempts:
         try:
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
                 temperature=0.8,
-                max_tokens=3000,  # Increase max tokens to help avoid truncation
+                max_tokens=2000,  # Increase max tokens to help avoid truncation
             )
             content = response.choices[0].message.content.strip()
             # Attempt to parse as JSON
