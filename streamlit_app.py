@@ -9,7 +9,7 @@ from urllib.parse import quote_plus
 # ------------------------------------------------------------------------------
 # 1) STREAMLIT CONFIG: Must be the first command
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Maui Itinerary Planner", layout="centered")
+st.set_page_config(page_title="Maui Itinerary Planner (RAG + Hotel)", layout="centered")
 
 # ------------------------------------------------------------------------------
 # 2) OPENAI & SERPAPI SETUP
@@ -242,7 +242,7 @@ if "itinerary_text" not in st.session_state:
 
 # 4b) UI
 st.markdown("# Plan Your Maui Adventure (RAG + Hotel)")
-st.markdown("Short itinerary with references to your hotel and real local spots.")
+st.markdown("Short itinerary with references to your hotel and real local spots (no phone numbers).")
 
 location_val = st.text_input("Where are you going?", value="Maui, Hawaii")
 
