@@ -24,7 +24,7 @@ SERPAPI_BASE_URL = "https://serpapi.com/search.json"
 
 def get_questions():
     """
-    Generate 3 user-friendly questions about the trip from gpt-4o-mini.
+    Generate 3 user-friendly questions about the trip from gpt-4o.
     We'll add a 4th (hotel) question ourselves to keep it consistent every time.
     """
     system_prompt = "You are a friendly travel assistant helping plan a trip."
@@ -34,7 +34,7 @@ def get_questions():
     )
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Using 'gpt-4o-mini' as requested
+            model="gpt-4o",  # Using 'gpt-4o' as requested
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -82,7 +82,7 @@ def hidden_search_for_more_ideas(user_answers, trip_start, trip_end, location):
     # Ask GPT for the search queries
     try:
         ai_response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_context},
@@ -215,7 +215,7 @@ mentioning the hotel and relevant places.
 
     try:
         ai_response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_input},
