@@ -1,15 +1,14 @@
 import streamlit as st
 import openai
-from openai import ChatCompletion  # Updated import for OpenAI ChatCompletion
 import requests
 import json
 import time
 from datetime import date, timedelta
 
 # ------------------------------------------------------------------------------
-# Set API keys from Streamlit secrets
+# Set up OpenAI client
 # ------------------------------------------------------------------------------
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 SERPAPI_API_KEY = st.secrets["SERPAPI_API_KEY"]
 
 # ------------------------------------------------------------------------------
@@ -20,11 +19,11 @@ def get_questions():
         "You are a helpful itinerary planning assistant for a trip to Maui. "
         "Generate three engaging and dynamic questions for a traveler planning a Maui vacation. "
         "Each question should build upon the potential answer of the previous question. "
-        "Return the three questions as a JSON array. For example:\n"
+        "Return the three questions as a JSON array. Example format:\n"
         '["First question?", "Second question?", "Third question?"]'
     )
     try:
-        response = ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful itinerary planning assistant."},
@@ -40,7 +39,6 @@ def get_questions():
         return questions
     except Exception as e:
         st.error(f"Error generating questions: {e}")
-        # Fallback questions in case of error:
         return [
             "What is one thing you are most excited to experience in Maui?",
             "What type of cuisine are you most interested in exploring while in Maui?",
@@ -53,33 +51,29 @@ def get_questions():
 def generate_itinerary(conversation_history, start_date, end_date):
     system_prompt = (
         "You are an expert travel itinerary planner for Maui. Based on the traveler's preferences "
-        "provided below and the travel dates, generate a detailed itinerary for their trip. "
-        "The itinerary should include events, restaurants, scenic spots, tours, and adventure activities. "
-        "Additionally, provide a separate section called 'serpapi_queries' that contains search queries "
-        "for each category (events, restaurants, scenery, tours, adventures) to fetch additional details via SerpAPI. "
-        "Return the result as a valid JSON object with two keys: 'itinerary' and 'serpapi_queries'."
+        "and travel dates, generate a detailed itinerary. Include events, restaurants, scenic spots, "
+        "tours, and adventure activities. Also, provide 'serpapi_queries' for each category (events, restaurants, "
+        "scenery, tours, adventures) for additional details via SerpAPI. Return as valid JSON with keys: "
+        "'itinerary' and 'serpapi_queries'."
     )
-    
-    # Build the conversation text from the list of questions and answers
-    conversation_text = ""
-    for turn in conversation_history:
-        conversation_text += f"Q: {turn['question']}\nA: {turn['answer']}\n"
-    
+
+    conversation_text = "\n".join([f"Q: {q['question']}\nA: {q['answer']}" for q in conversation_history])
+
     user_prompt = (
         f"Travel Dates: {start_date} to {end_date}\n"
         f"Preferences:\n{conversation_text}\n\n"
-        "Please generate the itinerary in JSON format."
+        "Generate the itinerary in JSON format."
     )
-    
+
     try:
-        response = ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.8,
-            max_tokens=600,
+            max_tokens=1000,
         )
         content = response.choices[0].message.content.strip()
         itinerary_data = json.loads(content)
@@ -133,7 +127,7 @@ if "itinerary_generated" not in st.session_state:
 st.title("Maui Itinerary Planner")
 st.markdown("Plan an exciting trip to Maui with dynamic itinerary suggestions based on your preferences.")
 
-# Date selection (always visible)
+# Date selection
 col1, col2 = st.columns(2)
 with col1:
     start_date = st.date_input("Select Start Date", value=date.today())
@@ -143,7 +137,7 @@ if start_date > end_date:
     st.error("Start date must be before end date.")
 
 # ------------------------------------------------------------------------------
-# Form: Ask all three questions at once (without page refresh)
+# Form: Ask all three questions at once
 # ------------------------------------------------------------------------------
 st.header("Tell us about your Maui trip!")
 with st.form("questions_form"):
@@ -154,13 +148,11 @@ with st.form("questions_form"):
     submitted = st.form_submit_button("Generate Itinerary")
     
     if submitted:
-        # Build the conversation as a list of question/answer pairs
         conversation = [
             {"question": st.session_state.questions[0], "answer": answer1},
             {"question": st.session_state.questions[1], "answer": answer2},
             {"question": st.session_state.questions[2], "answer": answer3},
         ]
-        # Generate the itinerary based on the conversation and dates
         itinerary_data = generate_itinerary(conversation, start_date, end_date)
         if itinerary_data is not None:
             st.session_state.itinerary_generated = True
@@ -170,7 +162,7 @@ with st.form("questions_form"):
             st.error("Failed to generate itinerary. Please try again.")
 
 # ------------------------------------------------------------------------------
-# Display the itinerary and additional SerpAPI details if generated
+# Display the itinerary and SerpAPI details
 # ------------------------------------------------------------------------------
 if st.session_state.itinerary_generated:
     st.subheader("Your Dynamic Maui Itinerary")
