@@ -9,7 +9,7 @@ from urllib.parse import quote_plus
 # ------------------------------------------------------------------------------
 # 1) STREAMLIT CONFIG: Must be the first command
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Maui Itinerary Planner (RAG + Hotel)", layout="centered")
+st.set_page_config(page_title="Maui Itinerary Planner", layout="centered")
 
 # ------------------------------------------------------------------------------
 # 2) OPENAI & SERPAPI SETUP
