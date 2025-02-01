@@ -1,18 +1,14 @@
 import streamlit as st
 import openai
+from openai import ChatCompletion  # Updated import for OpenAI ChatCompletion
 import requests
 import json
 import time
 from datetime import date, timedelta
 
 # ------------------------------------------------------------------------------
-# IMPORTANT:
-# To use this code without changes, pin your OpenAI package version by adding:
-#    openai==0.28.0
-# to your requirements.txt.
-# ------------------------------------------------------------------------------
-  
 # Set API keys from Streamlit secrets
+# ------------------------------------------------------------------------------
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 SERPAPI_API_KEY = st.secrets["SERPAPI_API_KEY"]
 
@@ -28,7 +24,7 @@ def get_questions():
         '["First question?", "Second question?", "Third question?"]'
     )
     try:
-        response = openai.ChatCompletion.create(
+        response = ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful itinerary planning assistant."},
@@ -44,7 +40,7 @@ def get_questions():
         return questions
     except Exception as e:
         st.error(f"Error generating questions: {e}")
-        # Fallback questions in case of error
+        # Fallback questions in case of error:
         return [
             "What is one thing you are most excited to experience in Maui?",
             "What type of cuisine are you most interested in exploring while in Maui?",
@@ -76,7 +72,7 @@ def generate_itinerary(conversation_history, start_date, end_date):
     )
     
     try:
-        response = openai.ChatCompletion.create(
+        response = ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
