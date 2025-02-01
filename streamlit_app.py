@@ -6,8 +6,18 @@ import time
 from datetime import date, timedelta
 
 # ------------------------------------------------------------------------------
-# Set API keys from Streamlit secrets
+# IMPORTANT:
+# To use this code without changes, pin your OpenAI package version by adding the following
+# line to your requirements.txt:
+#
+#    openai==0.28.0
+#
+# Alternatively, if you want to use the latest version of OpenAI, run:
+#    openai migrate
+# and update the code as necessary.
 # ------------------------------------------------------------------------------
+  
+# Set API keys from Streamlit secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 SERPAPI_API_KEY = st.secrets["SERPAPI_API_KEY"]
 
@@ -46,6 +56,7 @@ def get_next_question(conversation_history):
         return question
     except Exception as e:
         st.error(f"Error generating question: {e}")
+        # Fallback question in case of error:
         return "What is one thing you are most excited to experience in Maui?"
 
 # ------------------------------------------------------------------------------
