@@ -242,7 +242,7 @@ if "itinerary_text" not in st.session_state:
 
 # 4b) UI
 st.markdown("# Plan Your Maui Adventure (RAG + Hotel)")
-st.markdown("Short itinerary with references to your hotel and real local spots (no phone numbers).")
+st.markdown("Short itinerary with references to your hotel and real local spots.")
 
 location_val = st.text_input("Where are you going?", value="Maui, Hawaii")
 
