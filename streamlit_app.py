@@ -7,14 +7,9 @@ from datetime import date, timedelta
 
 # ------------------------------------------------------------------------------
 # IMPORTANT:
-# To use this code without changes, pin your OpenAI package version by adding the following
-# line to your requirements.txt:
-#
+# To use this code without changes, pin your OpenAI package version by adding:
 #    openai==0.28.0
-#
-# Alternatively, if you want to use the latest version of OpenAI, run:
-#    openai migrate
-# and update the code as necessary.
+# to your requirements.txt.
 # ------------------------------------------------------------------------------
   
 # Set API keys from Streamlit secrets
@@ -22,42 +17,39 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 SERPAPI_API_KEY = st.secrets["SERPAPI_API_KEY"]
 
 # ------------------------------------------------------------------------------
-# Function to get the next dynamic question from OpenAI based on the conversation
+# Helper function to generate three dynamic questions at once
 # ------------------------------------------------------------------------------
-def get_next_question(conversation_history):
-    system_prompt = (
+def get_questions():
+    prompt = (
         "You are a helpful itinerary planning assistant for a trip to Maui. "
-        "Ask engaging and dynamic questions that help refine the traveler's itinerary preferences. "
-        "Each question should build upon previous answers (if any) and be specific. "
-        "Only ask one question at a time."
+        "Generate three engaging and dynamic questions for a traveler planning a Maui vacation. "
+        "Each question should build upon the potential answer of the previous question. "
+        "Return the three questions as a JSON array. For example:\n"
+        '["First question?", "Second question?", "Third question?"]'
     )
-    
-    # Build conversation text (if any)
-    conversation_text = ""
-    if conversation_history:
-        for turn in conversation_history:
-            conversation_text += f"Q: {turn['question']}\nA: {turn['answer']}\n"
-    else:
-        conversation_text = "No previous conversation."
-    
-    user_prompt = conversation_text + "\nPlease ask the next engaging question."
-    
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": "You are a helpful itinerary planning assistant."},
+                {"role": "user", "content": prompt},
             ],
             temperature=0.7,
-            max_tokens=100,
+            max_tokens=150,
         )
-        question = response.choices[0].message.content.strip()
-        return question
+        content = response.choices[0].message.content.strip()
+        questions = json.loads(content)
+        if not isinstance(questions, list) or len(questions) != 3:
+            raise ValueError("Expected a list of three questions")
+        return questions
     except Exception as e:
-        st.error(f"Error generating question: {e}")
-        # Fallback question in case of error:
-        return "What is one thing you are most excited to experience in Maui?"
+        st.error(f"Error generating questions: {e}")
+        # Fallback questions in case of error
+        return [
+            "What is one thing you are most excited to experience in Maui?",
+            "What type of cuisine are you most interested in exploring while in Maui?",
+            "Do you have any special interests or activities (e.g., hiking, snorkeling, culture) that you'd like to prioritize?"
+        ]
 
 # ------------------------------------------------------------------------------
 # Function to generate a full itinerary using OpenAI based on the conversation and dates
@@ -65,13 +57,14 @@ def get_next_question(conversation_history):
 def generate_itinerary(conversation_history, start_date, end_date):
     system_prompt = (
         "You are an expert travel itinerary planner for Maui. Based on the traveler's preferences "
-        "provided in the conversation below and the travel dates, generate a detailed itinerary for "
-        "their trip. The itinerary should include events, restaurants, scenic spots, tours, and adventure "
-        "activities. Additionally, provide a separate section called 'serpapi_queries' that contains search queries "
+        "provided below and the travel dates, generate a detailed itinerary for their trip. "
+        "The itinerary should include events, restaurants, scenic spots, tours, and adventure activities. "
+        "Additionally, provide a separate section called 'serpapi_queries' that contains search queries "
         "for each category (events, restaurants, scenery, tours, adventures) to fetch additional details via SerpAPI. "
         "Return the result as a valid JSON object with two keys: 'itinerary' and 'serpapi_queries'."
     )
     
+    # Build the conversation text from the list of questions and answers
     conversation_text = ""
     for turn in conversation_history:
         conversation_text += f"Q: {turn['question']}\nA: {turn['answer']}\n"
@@ -93,7 +86,6 @@ def generate_itinerary(conversation_history, start_date, end_date):
             max_tokens=600,
         )
         content = response.choices[0].message.content.strip()
-        # Attempt to parse the JSON output
         itinerary_data = json.loads(content)
         return itinerary_data
     except json.JSONDecodeError:
@@ -131,12 +123,11 @@ def call_serpapi(query, retries=3):
     return {}
 
 # ------------------------------------------------------------------------------
-# Initialize session state variables for conversation and itinerary generation
+# Initialize session state variables
 # ------------------------------------------------------------------------------
-if "conversation" not in st.session_state:
-    st.session_state.conversation = []
-if "question_index" not in st.session_state:
-    st.session_state.question_index = 0
+if "questions" not in st.session_state:
+    st.session_state.questions = get_questions()
+
 if "itinerary_generated" not in st.session_state:
     st.session_state.itinerary_generated = False
 
@@ -146,7 +137,7 @@ if "itinerary_generated" not in st.session_state:
 st.title("Maui Itinerary Planner")
 st.markdown("Plan an exciting trip to Maui with dynamic itinerary suggestions based on your preferences.")
 
-# Date selection using two columns
+# Date selection (always visible)
 col1, col2 = st.columns(2)
 with col1:
     start_date = st.date_input("Select Start Date", value=date.today())
@@ -156,40 +147,25 @@ if start_date > end_date:
     st.error("Start date must be before end date.")
 
 # ------------------------------------------------------------------------------
-# Conversation Flow: Ask 3 dynamic questions to learn her preferences
+# Form: Ask all three questions at once (without page refresh)
 # ------------------------------------------------------------------------------
-if st.session_state.question_index < 3:
-    st.header(f"Question {st.session_state.question_index + 1} of 3")
-    # If no current question exists in session state, generate one
-    if "current_question" not in st.session_state:
-        question = get_next_question(st.session_state.conversation)
-        st.session_state.current_question = question
-    st.write(f"**{st.session_state.current_question}**")
+st.header("Tell us about your Maui trip!")
+with st.form("questions_form"):
+    answer1 = st.text_input(st.session_state.questions[0], key="answer1")
+    answer2 = st.text_input(st.session_state.questions[1], key="answer2")
+    answer3 = st.text_input(st.session_state.questions[2], key="answer3")
     
-    with st.form(key="answer_form"):
-        answer = st.text_input("Your answer:")
-        submit = st.form_submit_button("Submit Answer")
-    if submit and answer:
-        st.session_state.conversation.append({
-            "question": st.session_state.current_question,
-            "answer": answer
-        })
-        st.session_state.question_index += 1
-        # Remove the current question so the next one is generated
-        del st.session_state.current_question
-        # Use experimental_rerun if available; otherwise, prompt a manual refresh.
-        if hasattr(st, "experimental_rerun"):
-            st.experimental_rerun()
-        else:
-            st.write("Please refresh the page to see the next question.")
-
-# ------------------------------------------------------------------------------
-# Once 3 questions have been answered, allow itinerary generation
-# ------------------------------------------------------------------------------
-if st.session_state.question_index >= 3 and not st.session_state.itinerary_generated:
-    st.header("Generate Your Maui Itinerary")
-    if st.button("Generate Itinerary"):
-        itinerary_data = generate_itinerary(st.session_state.conversation, start_date, end_date)
+    submitted = st.form_submit_button("Generate Itinerary")
+    
+    if submitted:
+        # Build the conversation as a list of question/answer pairs
+        conversation = [
+            {"question": st.session_state.questions[0], "answer": answer1},
+            {"question": st.session_state.questions[1], "answer": answer2},
+            {"question": st.session_state.questions[2], "answer": answer3},
+        ]
+        # Generate the itinerary based on the conversation and dates
+        itinerary_data = generate_itinerary(conversation, start_date, end_date)
         if itinerary_data is not None:
             st.session_state.itinerary_generated = True
             st.session_state.itinerary_data = itinerary_data
@@ -198,7 +174,7 @@ if st.session_state.question_index >= 3 and not st.session_state.itinerary_gener
             st.error("Failed to generate itinerary. Please try again.")
 
 # ------------------------------------------------------------------------------
-# Display the itinerary and fetch additional details via SerpAPI
+# Display the itinerary and additional SerpAPI details if generated
 # ------------------------------------------------------------------------------
 if st.session_state.itinerary_generated:
     st.subheader("Your Dynamic Maui Itinerary")
