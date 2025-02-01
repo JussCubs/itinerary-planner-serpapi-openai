@@ -6,6 +6,17 @@ import time
 from datetime import date, timedelta
 
 # ------------------------------------------------------------------------------
+# Ensure you have the proper versions:
+# Option A: If you want to use this code without changes, pin openai==0.28.0
+#    pip install openai==0.28.0
+#
+# Option B: If you prefer to use the latest OpenAI package (>=1.0.0),
+#    run "openai migrate" and ensure your code follows the new interface.
+#
+# For this code sample, we assume that openai.ChatCompletion.create is valid.
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Set API keys from Streamlit secrets
 # ------------------------------------------------------------------------------
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -46,6 +57,7 @@ def get_next_question(conversation_history):
         return question
     except Exception as e:
         st.error(f"Error generating question: {e}")
+        # Fallback question in case of error:
         return "What is one thing you are most excited to experience in Maui?"
 
 # ------------------------------------------------------------------------------
