@@ -6,17 +6,6 @@ import time
 from datetime import date, timedelta
 
 # ------------------------------------------------------------------------------
-# Ensure you have the proper versions:
-# Option A: If you want to use this code without changes, pin openai==0.28.0
-#    pip install openai==0.28.0
-#
-# Option B: If you prefer to use the latest OpenAI package (>=1.0.0),
-#    run "openai migrate" and ensure your code follows the new interface.
-#
-# For this code sample, we assume that openai.ChatCompletion.create is valid.
-# ------------------------------------------------------------------------------
-
-# ------------------------------------------------------------------------------
 # Set API keys from Streamlit secrets
 # ------------------------------------------------------------------------------
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -57,7 +46,6 @@ def get_next_question(conversation_history):
         return question
     except Exception as e:
         st.error(f"Error generating question: {e}")
-        # Fallback question in case of error:
         return "What is one thing you are most excited to experience in Maui?"
 
 # ------------------------------------------------------------------------------
@@ -178,7 +166,11 @@ if st.session_state.question_index < 3:
         st.session_state.question_index += 1
         # Remove the current question so the next one is generated
         del st.session_state.current_question
-        st.experimental_rerun()
+        # Use experimental_rerun if available; otherwise, prompt a manual refresh.
+        if hasattr(st, "experimental_rerun"):
+            st.experimental_rerun()
+        else:
+            st.write("Please refresh the page to see the next question.")
 
 # ------------------------------------------------------------------------------
 # Once 3 questions have been answered, allow itinerary generation
