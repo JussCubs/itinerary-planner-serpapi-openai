@@ -9,7 +9,7 @@ from urllib.parse import quote_plus
 # ------------------------------------------------------------------------------
 # 1) STREAMLIT CONFIG: Must be the first command
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Maui Itinerary Planner (RAG)", layout="centered")
+st.set_page_config(page_title="Maui Itinerary Planner (RAG + Hotel)", layout="centered")
 
 # ------------------------------------------------------------------------------
 # 2) OPENAI & SERPAPI SETUP
@@ -25,6 +25,7 @@ SERPAPI_BASE_URL = "https://serpapi.com/search.json"
 def get_questions():
     """
     Generate 3 user-friendly questions about the trip from GPT-4o.
+    We'll add a 4th (hotel) question ourselves to keep it consistent every time.
     """
     system_prompt = "You are a friendly travel assistant helping plan a trip."
     user_prompt = (
@@ -45,12 +46,15 @@ def get_questions():
         q_list = json.loads(content)
         if not isinstance(q_list, list) or len(q_list) != 3:
             raise ValueError("Expected exactly 3 questions in a JSON list.")
+        # Insert a 4th question about the hotel
+        q_list.append("Which hotel are you staying at?")
         return q_list
     except:
         return [
             "What excites you most about traveling there?",
             "What sort of dining do you enjoy?",
-            "Do you have any must-do activities (like hiking or snorkeling)?"
+            "Do you have any must-do activities (like hiking or snorkeling)?",
+            "Which hotel are you staying at?",
         ]
 
 def hidden_search_for_more_ideas(user_answers, trip_start, trip_end, location):
@@ -58,6 +62,7 @@ def hidden_search_for_more_ideas(user_answers, trip_start, trip_end, location):
     1) Asks GPT for custom search queries based on user answers, dates, and location.
     2) For each query, calls SerpAPI and caches the results.
     """
+    # user_answers includes the hotel name at index 3 now
     system_prompt = (
         "You are an advanced travel planner. "
         "The user has certain preferences, travel dates, and a location. "
@@ -70,6 +75,7 @@ def hidden_search_for_more_ideas(user_answers, trip_start, trip_end, location):
         f"1) {user_answers[0]}\n"
         f"2) {user_answers[1]}\n"
         f"3) {user_answers[2]}\n"
+        f"Hotel: {user_answers[3]}\n"
         "Return only {\"search_queries\": [\"...\"]}."
     )
 
@@ -88,6 +94,7 @@ def hidden_search_for_more_ideas(user_answers, trip_start, trip_end, location):
         data = json.loads(raw)
         queries = data.get("search_queries", [])
     except:
+        # Fallback if GPT fails
         queries = [
             f"Dining in {location}",
             f"Must-see events in {location}",
@@ -111,7 +118,7 @@ def hidden_search_for_more_ideas(user_answers, trip_start, trip_end, location):
 def fetch_serpapi_data(query, location, retries=3):
     """
     Query SerpAPI for the top Google results, focusing on 'organic_results' and any 
-    'local_results' or 'places' data. We'll attempt to parse out rating, address, phone, etc.
+    'local_results' or 'places' data. We do NOT include phone numbers per request.
     """
     if not SERPAPI_KEY:
         return {}
@@ -135,8 +142,8 @@ def fetch_serpapi_data(query, location, retries=3):
 
 def gather_rag_data(all_search_data):
     """
-    Gather relevant data from SerpAPI results, including rating, phone, snippet, address, etc.
-    We'll pass this to GPT as bullet points for 'RAG' usage.
+    Gather relevant data from SerpAPI results, including rating, snippet, address, etc.
+    We'll pass this to GPT as bullet points for 'RAG' usage. Omit phone numbers.
     """
     queries = all_search_data.get("search_queries", [])
     results_dict = all_search_data.get("search_results", {})
@@ -159,18 +166,16 @@ def gather_rag_data(all_search_data):
 
         # 2) Possibly get 'local_results' or 'local_map' data
         if "local_results" in data:
-            local_items = data["local_results"].get("places", [])[:2]  # up to 2
+            local_items = data["local_results"].get("places", [])[:2]
             for item in local_items:
                 title = item.get("title", "Untitled")
                 rating = item.get("rating", "No rating")
                 reviews = item.get("reviews", "No reviews info")
                 address = item.get("address", "")
-                phone = item.get("phone", "")
                 line = (
                     f"- Local: {title}\n  "
                     f"Rating: {rating}, Reviews: {reviews}\n  "
-                    f"Address: {address}\n  "
-                    f"Phone: {phone}"
+                    f"Address: {address}"
                 )
                 lines.append(line)
 
@@ -178,19 +183,18 @@ def gather_rag_data(all_search_data):
         return "(No extra data found.)"
     return "\n".join(lines)
 
-
 def generate_itinerary(user_answers, trip_start, trip_end, location, all_search_data):
     """
     Build a short day-by-day itinerary that references the SERP data for RAG usage. 
     We'll pass details from gather_rag_data(...) into the GPT prompt so it can incorporate them.
+    The user_answers[3] is the hotel name, which we also feed into the prompt.
     """
-    # Gather a short list of relevant details from SerpAPI
     rag_snippet = gather_rag_data(all_search_data)
 
     system_prompt = (
         "You create a concise, day-by-day travel plan in Markdown, referencing real data from the user. "
-        "Incorporate places, addresses, or phone numbers if relevant. Offer short reasons for each mention. "
-        "Keep it minimal and well-formatted. Avoid disclaimers or code references."
+        "They have specified a hotel name. Use short reasons for each mention, minimal length, well-formatted in Markdown. "
+        "Avoid disclaimers or code references."
     )
 
     user_input = f"""Location: {location}
@@ -199,12 +203,14 @@ Preferences:
 1) {user_answers[0]}
 2) {user_answers[1]}
 3) {user_answers[2]}
+Hotel: {user_answers[3]}
 
-Here is extra data from search results (RAG), which may include rating, phone, snippet, etc.:
+Here is extra data from search results (RAG):
 
 {rag_snippet}
 
-Please weave some of this info into a short day-by-day plan (friendly Markdown).
+Please weave some of this info into a short day-by-day plan (friendly Markdown), 
+mentioning the hotel and relevant places. 
 """
 
     try:
@@ -235,10 +241,9 @@ if "itinerary_text" not in st.session_state:
     st.session_state.itinerary_text = None
 
 # 4b) UI
-st.markdown("# Plan Your Maui Adventure (RAG Edition)")
-st.markdown("Get a short day-by-day itinerary that references real data from the web, seamlessly embedded!")
+st.markdown("# Plan Your Maui Adventure (RAG + Hotel)")
+st.markdown("Short itinerary with references to your hotel and real local spots (no phone numbers).")
 
-# Let user choose any location
 location_val = st.text_input("Where are you going?", value="Maui, Hawaii")
 
 col1, col2 = st.columns(2)
@@ -249,9 +254,16 @@ with col2:
 
 st.subheader("Your Preferences")
 with st.form("trip_form"):
-    user_answer1 = st.text_input(st.session_state.dynamic_questions[0], key="ans1")
-    user_answer2 = st.text_input(st.session_state.dynamic_questions[1], key="ans2")
-    user_answer3 = st.text_input(st.session_state.dynamic_questions[2], key="ans3")
+    # We now have 4 questions, the last one is about the hotel
+    q1 = st.session_state.dynamic_questions[0]
+    q2 = st.session_state.dynamic_questions[1]
+    q3 = st.session_state.dynamic_questions[2]
+    q4 = st.session_state.dynamic_questions[3]  # "Which hotel are you staying at?"
+
+    user_answer1 = st.text_input(q1, key="ans1")
+    user_answer2 = st.text_input(q2, key="ans2")
+    user_answer3 = st.text_input(q3, key="ans3")
+    user_answer4 = st.text_input(q4, key="ans4")
 
     plan_btn = st.form_submit_button("Plan My Adventure")
 
@@ -263,6 +275,7 @@ with st.form("trip_form"):
                 user_answer1.strip(),
                 user_answer2.strip(),
                 user_answer3.strip(),
+                user_answer4.strip(),
                 str(start_date_val),
                 str(end_date_val),
                 location_val.strip(),
@@ -272,17 +285,17 @@ with st.form("trip_form"):
             if user_ans_tuple not in st.session_state.cached_search_data:
                 st.info("Gathering extra data for your trip (RAG style)...")
                 new_data = hidden_search_for_more_ideas(
-                    (user_answer1.strip(), user_answer2.strip(), user_answer3.strip()),
+                    (user_answer1.strip(), user_answer2.strip(), user_answer3.strip(), user_answer4.strip()),
                     start_date_val,
                     end_date_val,
                     location_val.strip()
                 )
                 st.session_state.cached_search_data[user_ans_tuple] = new_data
 
-            st.info("Creating your itinerary with real data references...")
+            st.info("Creating your itinerary with your hotel details plus relevant spots...")
             search_data_for_ai = st.session_state.cached_search_data[user_ans_tuple]
             new_itinerary = generate_itinerary(
-                (user_answer1.strip(), user_answer2.strip(), user_answer3.strip()),
+                (user_answer1.strip(), user_answer2.strip(), user_answer3.strip(), user_answer4.strip()),
                 start_date_val,
                 end_date_val,
                 location_val.strip(),
@@ -322,6 +335,7 @@ if st.session_state.itinerary_text:
         st.session_state.ans1.strip(),
         st.session_state.ans2.strip(),
         st.session_state.ans3.strip(),
+        st.session_state.ans4.strip(),
         str(start_date_val),
         str(end_date_val),
         location_val.strip(),
@@ -329,7 +343,7 @@ if st.session_state.itinerary_text:
     if user_ans_tuple not in st.session_state.cached_search_data:
         st.write("No extra data found. Please plan your trip first.")
     else:
-        # Show the raw queries & top results, in case the user wants to see them
+        # Show the queries & top results with direct links
         search_info = st.session_state.cached_search_data[user_ans_tuple]
         queries = search_info.get("search_queries", [])
         results_dict = search_info.get("search_results", {})
@@ -349,9 +363,9 @@ if st.session_state.itinerary_text:
                         snippet = item.get("snippet", "")
                         st.markdown(f"**{title}**")
                         st.write(snippet)
-                        st.markdown(f"[Learn more]({link})")
+                        st.markdown(f"[Visit Site]({link})")
 
-                # If there's local results
+                # If there's local results (no phone numbers)
                 if "local_results" in data:
                     places = data["local_results"].get("places", [])[:3]
                     for place in places:
@@ -359,9 +373,12 @@ if st.session_state.itinerary_text:
                         rating = place.get("rating", "No rating")
                         reviews = place.get("reviews", "No reviews info")
                         address = place.get("address", "No address")
-                        phone = place.get("phone", "No phone")
+                        # If a link is available, show it. (Some local_results may have "website" or "link".)
+                        link = place.get("website", place.get("link", "#"))
+
                         st.markdown(f"**{title}**")
                         st.write(f"Rating: {rating}, Reviews: {reviews}")
                         st.write(f"Address: {address}")
-                        st.write(f"Phone: {phone}")
+                        if link and link != "#":
+                            st.markdown(f"[Visit Site]({link})")
                 st.markdown("---")
