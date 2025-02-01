@@ -7,43 +7,87 @@ from datetime import date, timedelta
 from urllib.parse import quote_plus
 
 # ------------------------------------------------------------------------------
-# SETUP: OpenAI & "Hidden" Additional Searches
+# 1) CONFIG: Setup OpenAI + Secrets
 # ------------------------------------------------------------------------------
 client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+SERPAPI_KEY = st.secrets.get("SERPAPI_API_KEY", None)
+SERPAPI_BASE_URL = "https://serpapi.com/search.json"
 
-# We'll do some hidden searches to gather extra suggestions behind the scenes,
-# but won't mention the word "SerpAPI" or "JSON" to the user. We'll just say,
-# "we found additional ideas for you."
-EXTRA_SEARCH_CATEGORIES = {
-    "Dining": "Maui dining options",
-    "Events": "What's happening in Maui",
-    "Outdoor Fun": "Outdoor adventures in Maui",
-    "Local Culture": "Maui cultural highlights",
-    "Hidden Gems": "Unique off-the-beaten-path attractions in Maui",
-}
+# ------------------------------------------------------------------------------
+# 2) HIDDEN SEARCH: For Additional Ideas
+# ------------------------------------------------------------------------------
+def hidden_search_for_more_ideas(user_answers, trip_start, trip_end):
+    """
+    Use an AI prompt to generate custom search queries based on the user's 
+    answers + travel dates. Then call SerpAPI once for each query. We'll 
+    store and reuse these results unless the user changes their input.
+    """
+    # Step A: Ask AI for recommended search queries
+    system_prompt = (
+        "You are an advanced travel planner for Maui. "
+        "The user has certain preferences and trip dates. "
+        "Produce a brief JSON object with a 'search_queries' array of strings. "
+        "These queries should reflect additional ideas or hidden gems. "
+        "No disclaimers or extra text, just valid JSON with one key 'search_queries'."
+    )
+    user_context = (
+        f"Trip Dates: {trip_start} to {trip_end}\n"
+        f"Preferences:\n"
+        f"1) {user_answers[0]}\n"
+        f"2) {user_answers[1]}\n"
+        f"3) {user_answers[2]}\n"
+        "Return only a JSON object like {\"search_queries\": [\"...\", \"...\"]}."
+    )
+    
+    try:
+        ai_response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_context},
+            ],
+            temperature=0.7,
+            max_tokens=600
+        )
+        raw = ai_response.choices[0].message.content.strip()
+        data = json.loads(raw)
+        queries = data.get("search_queries", [])
+    except:
+        # Fallback if AI query generation fails
+        queries = [
+            "Maui dining recommendations",
+            "Must-see events in Maui",
+            "Outdoor adventures on Maui",
+        ]
 
-# Helper to get "hidden" search results
-def hidden_search_for_more_ideas(query, retries=3):
-    """We'll make a hidden call to SerpAPI (or any search API) to fetch extra ideas."""
-    base_url = "https://serpapi.com/search.json"
-    api_key = st.secrets.get("SERPAPI_API_KEY", None)
+    # Step B: Call SerpAPI for each query
+    results = {}
+    if SERPAPI_KEY:
+        for q in queries:
+            results[q] = fetch_serpapi_data(q)
+    else:
+        # If there's no SerpAPI key, just store an empty placeholder
+        for q in queries:
+            results[q] = {}
 
-    # If we don't have a SerpAPI key, just return an empty dict
-    if not api_key:
-        return {}
+    return {
+        "search_queries": queries,
+        "search_results": results
+    }
 
+def fetch_serpapi_data(query, retries=3):
+    """A helper to call SerpAPI behind the scenes."""
     params = {
         "engine": "google",
         "q": query,
         "location": "Maui, Hawaii",
-        "api_key": api_key,
+        "api_key": SERPAPI_KEY,
         "hl": "en",
         "gl": "us"
     }
-
     for attempt in range(retries):
         try:
-            resp = requests.get(base_url, params=params, timeout=10)
+            resp = requests.get(SERPAPI_BASE_URL, params=params, timeout=10)
             if resp.status_code == 200:
                 return resp.json()
         except:
@@ -52,185 +96,160 @@ def hidden_search_for_more_ideas(query, retries=3):
     return {}
 
 # ------------------------------------------------------------------------------
-# QUESTION GENERATION
+# 3) ITINERARY GENERATION (Always Fresh)
 # ------------------------------------------------------------------------------
-def get_questions():
+def generate_itinerary(user_answers, trip_start, trip_end, all_search_data):
     """
-    Generate three friendly, no-jargon questions about the trip.
-    Returns a list of 3 question strings.
+    Build a new day-by-day itinerary each time the user clicks the plan button,
+    even if they haven't changed anything.
+    
+    We can optionally pass the existing search data to the AI, so it can incorporate 
+    or reference it if needed. That’s up to you. 
+    For simplicity, we'll just let it generate a plan based on the user's answers.
     """
-    prompt = (
-        "You are a helpful, friendly travel planner for Maui. "
-        "Please provide three short questions in plain language to help plan a Maui trip. "
-        "Use a simple list format. Example: ['Q1', 'Q2', 'Q3']"
-    )
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a friendly travel planner."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.7,
-            max_tokens=200,
-        )
-        txt = response.choices[0].message.content.strip()
-        qlist = json.loads(txt)
-        if not isinstance(qlist, list) or len(qlist) != 3:
-            raise ValueError("Expected 3 items in list.")
-        return qlist
-    except:
-        # Fallback if the call fails or parse fails
-        return [
-            "What excites you most about visiting Maui?",
-            "What types of cuisine or dining experiences do you enjoy?",
-            "Are there any special activities, like hiking or snorkeling, you'd love to do?"
-        ]
-
-# ------------------------------------------------------------------------------
-# ITINERARY GENERATION (with caching by user input)
-# ------------------------------------------------------------------------------
-def generate_itinerary(answers, start_date, end_date):
-    """
-    Build a day-by-day plan. We'll talk to GPT behind the scenes.
-    We'll keep it simple for the user, no mention of "JSON" or "queries."
-    """
-    # Create a simple user-friendly prompt for GPT
     system_prompt = (
-        "You create day-by-day travel plans for Maui. "
-        "Include fun activities, sights, dining suggestions, and local culture. "
-        "Be warm and descriptive, but not too long. "
-        "User wants a daily plan from Start Date to End Date. "
-        "No extra disclaimers or code-like formats."
+        "You create day-by-day Maui travel plans. Be warm, descriptive, but not too long. "
+        "Here are the user's preferences and trip dates. Use your own knowledge. "
+        "No disclaimers or mention of searching. Provide a single text-based itinerary."
     )
 
-    # Build a summary of what the user said
-    user_pref_summary = (
-        f"Trip Dates: {start_date} to {end_date}.\n"
-        f"Preferences:\n"
-        f"1) {answers[0]}\n"
-        f"2) {answers[1]}\n"
-        f"3) {answers[2]}\n"
-        "\nProvide a day-by-day plan. Write it in a friendly tone."
+    # Summarize user answers
+    user_input = (
+        f"Trip Dates: {trip_start} to {trip_end}\n"
+        f"1) {user_answers[0]}\n"
+        f"2) {user_answers[1]}\n"
+        f"3) {user_answers[2]}\n"
+        "Write a short, day-by-day plan in a friendly tone."
     )
-
+    
     try:
-        response = client.chat.completions.create(
+        ai_response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_pref_summary},
+                {"role": "user", "content": user_input},
             ],
             temperature=0.8,
-            max_tokens=1800,
+            max_tokens=1600
         )
-        itinerary_text = response.choices[0].message.content.strip()
-        return itinerary_text
-    except Exception as e:
+        return ai_response.choices[0].message.content.strip()
+    except:
         return None
 
 # ------------------------------------------------------------------------------
-# STREAMLIT APP
+# 4) STREAMLIT APP
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Maui Itinerary Planner", layout="centered")
 
-# Cache user Q&A to handle repeated requests
-if "generated_questions" not in st.session_state:
-    st.session_state.generated_questions = get_questions()
+# Keep track of the dynamic questions
+if "dynamic_questions" not in st.session_state:
+    st.session_state.dynamic_questions = get_questions()
 
-if "cached_itineraries" not in st.session_state:
-    # We'll store itineraries in a dictionary with a key based on user inputs
-    st.session_state.cached_itineraries = {}
+# We store user search data by input in a dictionary: 
+#   { (answer1, answer2, answer3, start_date, end_date): { "search_queries": [...], "search_results": {...} } }
+if "cached_search_data" not in st.session_state:
+    st.session_state.cached_search_data = {}
 
-st.markdown("# Maui Itinerary Planner")
-st.markdown("Enjoy a customized, day-by-day plan for your dream trip to Maui!\n")
+# The itinerary text is always regenerated, but we keep it in session to display
+if "itinerary_text" not in st.session_state:
+    st.session_state.itinerary_text = None
 
-# Date selection
-col_left, col_right = st.columns(2)
-with col_left:
-    start_date = st.date_input("When does your trip begin?", value=date.today())
-with col_right:
-    end_date = st.date_input("When does your trip end?", value=date.today() + timedelta(days=5))
+# Start / End Dates
+col1, col2 = st.columns(2)
+with col1:
+    start_date_val = st.date_input("When does your trip begin?", value=date.today(), key="start_date_mem")
+with col2:
+    end_date_val = st.date_input("When does your trip end?", value=date.today() + timedelta(days=5), key="end_date_mem")
 
-if start_date > end_date:
-    st.error("Your start date cannot be after your end date!")
-    st.stop()
+st.markdown("# Plan Your Maui Adventure")
 
-# Show the three questions
-st.subheader("Tell Us About Your Preferences")
-with st.form(key="trip_form"):
-    ans1 = st.text_input(st.session_state.generated_questions[0], key="a1")
-    ans2 = st.text_input(st.session_state.generated_questions[1], key="a2")
-    ans3 = st.text_input(st.session_state.generated_questions[2], key="a3")
+# Show the three dynamic questions
+with st.form("maui_form"):
+    ans1 = st.text_input(st.session_state.dynamic_questions[0], key="pref1")
+    ans2 = st.text_input(st.session_state.dynamic_questions[1], key="pref2")
+    ans3 = st.text_input(st.session_state.dynamic_questions[2], key="pref3")
+    
+    plan_btn = st.form_submit_button("Plan My Maui Adventure")
 
-    submit_btn = st.form_submit_button("Plan My Maui Adventure")
+    if plan_btn:
+        if start_date_val > end_date_val:
+            st.error("Please ensure your start date is before your end date.")
+        else:
+            user_answers = (ans1.strip(), ans2.strip(), ans3.strip())
+            input_key = user_answers + (str(start_date_val), str(end_date_val))
 
-# If the user clicked "Plan My Maui Adventure"...
-if submit_btn:
-    user_answers = [ans1.strip(), ans2.strip(), ans3.strip()]
-    # Build a cache key from answers + dates
-    cache_key = (user_answers[0], user_answers[1], user_answers[2], str(start_date), str(end_date))
+            # 1) Check if we already have search data for these inputs
+            if input_key not in st.session_state.cached_search_data:
+                # We'll fetch new search data just once for these inputs
+                st.info("Gathering ideas for your trip...")
+                new_data = hidden_search_for_more_ideas(user_answers, start_date_val, end_date_val)
+                st.session_state.cached_search_data[input_key] = new_data
 
-    # Check if we have a cached itinerary for these exact inputs
-    if cache_key in st.session_state.cached_itineraries:
-        st.success("Using your previously generated itinerary!")
-        st.session_state.current_itinerary = st.session_state.cached_itineraries[cache_key]
-    else:
-        # Otherwise, generate a new itinerary
-        st.info("Planning your trip...")
-        itinerary_result = generate_itinerary(user_answers, start_date, end_date)
-        if itinerary_result is None:
-            st.error("Something went wrong while planning your trip. Please try again later.")
-            st.stop()
-        # Store in cache
-        st.session_state.cached_itineraries[cache_key] = itinerary_result
-        st.session_state.current_itinerary = itinerary_result
-        st.success("Your trip plan is ready! Scroll down to see details.")
+            # 2) Regardless of new or old search data, we always generate a fresh itinerary
+            st.info("Creating your custom itinerary...")
+            search_data_for_ai = st.session_state.cached_search_data[input_key]
+            new_itinerary = generate_itinerary(user_answers, start_date_val, end_date_val, search_data_for_ai)
+            if new_itinerary is None:
+                st.error("Something went wrong while building your itinerary. Please try again.")
+            else:
+                st.session_state.itinerary_text = new_itinerary
+                st.success("Your Maui plan is ready! Scroll down to check it out.")
 
-# If we have a "current_itinerary" in session state, show it
-if "current_itinerary" in st.session_state:
+# ------------------------------------------------------------------------------
+# DISPLAY ITINERARY
+# ------------------------------------------------------------------------------
+if st.session_state.itinerary_text:
     st.markdown("---")
-    st.markdown("## Your Maui Travel Plan")
-    final_plan = st.session_state.current_itinerary
-    st.markdown(final_plan)
+    st.markdown("## Your Day-by-Day Maui Itinerary")
+    st.markdown(st.session_state.itinerary_text)
 
-    # Provide a share/download feature
-    # Download button for the text itinerary
+    # Share / Download
+    itinerary_txt = st.session_state.itinerary_text
     st.download_button(
         label="Share This Itinerary",
-        data=final_plan,
+        data=itinerary_txt,
         file_name="my_maui_itinerary.txt",
         mime="text/plain"
     )
-    
-    # Simple email link
-    email_subject = quote_plus("Check out my Maui Trip Plan!")
-    email_body = quote_plus(final_plan)
+    email_subject = quote_plus("My Maui Trip Plan!")
+    email_body = quote_plus(itinerary_txt)
     mailto_link = f"mailto:?subject={email_subject}&body={email_body}"
     st.markdown(f"[Email This Itinerary]({mailto_link})")
 
+    # ----------------------------------------------------------------------------
+    # EXTRA IDEAS (same data if user hasn't changed anything)
+    # ----------------------------------------------------------------------------
     st.markdown("---")
     st.markdown("## More Ideas to Explore")
-    st.markdown(
-        "Below are extra suggestions we found. Feel free to add them to your plan!"
-    )
-
-    # Get hidden results for each category and show them in a friendly format
-    for cat_name, cat_query in EXTRA_SEARCH_CATEGORIES.items():
-        st.markdown(f"### {cat_name}")
-        suggestions_data = hidden_search_for_more_ideas(cat_query)
-        # If no data or not enough structure, just show a friendly fallback
-        if not suggestions_data or "organic_results" not in suggestions_data:
-            st.markdown("*(No extra suggestions found right now.)*")
-            continue
-
-        # Show top 3 suggestions in a user-friendly way
-        items = suggestions_data["organic_results"][:3]
-        for item in items:
-            title = item.get("title", "Untitled")
-            link = item.get("link", "#")
-            snippet = item.get("snippet", "")
-            st.markdown(f"**{title}**")
-            st.markdown(snippet)
-            st.markdown(f"[Read More]({link})\n")
-        st.markdown("---")
+    input_key = (st.session_state.pref1.strip(), 
+                 st.session_state.pref2.strip(),
+                 st.session_state.pref3.strip(),
+                 str(st.session_state.start_date_mem),
+                 str(st.session_state.end_date_mem))
+    if input_key not in st.session_state.cached_search_data:
+        st.write("No extra ideas found yet. Please plan your trip first.")
+    else:
+        search_info = st.session_state.cached_search_data[input_key]
+        queries = search_info.get("search_queries", [])
+        results_dict = search_info.get("search_results", {})
+        
+        if not queries:
+            st.write("We couldn't find more ideas at this time.")
+        else:
+            for q in queries:
+                st.markdown(f"### {q}")
+                data = results_dict.get(q, {})
+                if "organic_results" not in data:
+                    st.write("*(No extra suggestions found right now.)*")
+                    st.markdown("---")
+                    continue
+                # show top 2 or 3
+                top_items = data["organic_results"][:3]
+                for item in top_items:
+                    title = item.get("title", "Untitled")
+                    link = item.get("link", "#")
+                    snippet = item.get("snippet", "")
+                    st.markdown(f"**{title}**")
+                    st.write(snippet)
+                    st.markdown(f"[Learn more]({link})")
+                st.markdown("---")
